@@ -1,9 +1,10 @@
 import { AlertTriangle, CloudSun, Droplets, Gauge, MapPin, Wind } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import HealthImpact from '../components/HealthImpact'
 import RiskBadge from '../components/RiskBadge'
 import { getHealthImpact } from '../data/healthImpacts'
 import { getPublicSummaryText, getWeatherCondition } from '../data/publicForecast'
+import { getWeatherForCity } from '../services/weatherApi'
 import { getRiskColor } from '../utils/riskCalculator'
 
 const checklistItems = [
@@ -31,10 +32,38 @@ function PublicDashboard({
   onPlaceChange,
 }) {
   const [checkedItems, setCheckedItems] = useState([])
+  const [weatherResult, setWeatherResult] = useState(null)
+  const [weatherFailure, setWeatherFailure] = useState(null)
   const stateDistricts = useMemo(
     () => districts.filter((entry) => entry.state === selectedState),
     [districts, selectedState],
   )
+  useEffect(() => {
+    const controller = new AbortController()
+
+    getWeatherForCity(district.districtName, { signal: controller.signal })
+      .then((weather) => setWeatherResult({ districtName: district.districtName, weather }))
+      .catch((error) => {
+        if (error.name !== 'AbortError') {
+          setWeatherFailure({
+            districtName: district.districtName,
+            message: error instanceof Error ? error.message : 'Unable to retrieve live weather.',
+          })
+        }
+      })
+
+    return () => controller.abort()
+  }, [district.districtName])
+
+  const liveWeather = weatherResult?.districtName === district.districtName
+    ? weatherResult.weather
+    : null
+  const weatherError = weatherFailure?.districtName === district.districtName
+    ? weatherFailure.message
+    : ''
+  const displayedWeather = liveWeather
+    ? { ...district, ...liveWeather }
+    : district
   const heatImpact = getHealthImpact(district.riskLevel)
   const hasSevereAlert = ['DANGER', 'EXTREME DANGER', 'SEVERE'].includes(district.riskLevel)
 
@@ -109,7 +138,7 @@ function PublicDashboard({
         <div className="section-heading">
           <div>
             <p className="eyebrow">TODAY'S WEATHER</p>
-            <h2>{getWeatherCondition(district)}</h2>
+            <h2>{liveWeather?.description || getWeatherCondition(displayedWeather)}</h2>
           </div>
           <RiskBadge level={district.riskLevel} />
         </div>
@@ -117,11 +146,17 @@ function PublicDashboard({
           {weatherMetrics.map(({ label, field, unit, Icon }) => (
             <div className="today-weather-metric" key={field}>
               <span><Icon size={15} />{label}</span>
-              <strong>{district[field]} <small>{unit}</small></strong>
+              <strong>{displayedWeather[field]} <small>{unit}</small></strong>
             </div>
           ))}
         </div>
       </section>
+
+      {weatherError && (
+        <p className="demo-data-note" role="status">
+          Live weather unavailable: {weatherError}. Showing demonstration weather values.
+        </p>
+      )}
 
       <section
         className="today-risk panel"
@@ -182,7 +217,9 @@ function PublicDashboard({
 
       <div className="demo-data-note">
         <MapPin size={13} />
-        Prototype demonstration data · Not a validated live forecast
+        {liveWeather
+          ? 'Current weather from live service · Heat-risk values remain prototype data'
+          : 'Prototype demonstration data · Not a validated live forecast'}
       </div>
     </div>
   )
